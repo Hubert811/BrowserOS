@@ -282,6 +282,18 @@ impl RecordingStore {
             .join(format!("{key}.ndjson"))
     }
 
+    /// Discovery listing of recorded streams (newest first); see
+    /// `RecordingIndex::list_streams`.
+    pub async fn list_streams(
+        &self,
+        from_ms: Option<i64>,
+        to_ms: Option<i64>,
+        tab_id: Option<i64>,
+        limit: i64,
+    ) -> AppResult<Vec<crate::db::recording_index::StreamListRow>> {
+        self.index.list_streams(from_ms, to_ms, tab_id, limit).await
+    }
+
     pub async fn read_range(
         &self,
         document_id: &str,

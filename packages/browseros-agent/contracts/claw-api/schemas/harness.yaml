@@ -1,0 +1,42 @@
+HarnessSessionStartResponse:
+  type: object
+  additionalProperties: false
+  required: [sessionId]
+  properties:
+    sessionId:
+      type: string
+      description: The started session id (client-supplied or server-minted).
+
+HarnessSessionEndResponse:
+  type: object
+  additionalProperties: false
+  required: [ended]
+  properties:
+    ended:
+      type: boolean
+
+HarnessDispatchResponse:
+  type: object
+  additionalProperties: false
+  required: [dispatchId]
+  properties:
+    dispatchId:
+      type: integer
+      format: int64
+      description: Persisted audit row id for the reported dispatch.
+
+HarnessClaimTabResponse:
+  type: object
+  additionalProperties: false
+  required: [claimed]
+  properties:
+    claimed:
+      type: boolean
+
+HarnessReleaseTabResponse:
+  type: object
+  additionalProperties: false
+  required: [released]
+  properties:
+    released:
+      type: boolean

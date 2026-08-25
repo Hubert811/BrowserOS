@@ -1,3 +1,72 @@
+streamList:
+  get:
+    operationId: listRecordingStreams
+    summary: Newest-first index of recorded streams for out-of-process discovery.
+    parameters:
+      - name: fromMs
+        in: query
+        schema:
+          type: integer
+          format: int64
+      - name: toMs
+        in: query
+        schema:
+          type: integer
+          format: int64
+      - name: tabId
+        in: query
+        schema:
+          type: integer
+          format: int64
+      - name: limit
+        in: query
+        schema:
+          type: integer
+          format: int64
+          default: 200
+          maximum: 1000
+    responses:
+      '200':
+        description: Recorded stream index.
+        content:
+          application/json:
+            schema:
+              $ref: ../schemas/recordings.yaml#/RecordingStreamList
+      '500':
+        $ref: ../responses.yaml#/InternalError
+
+streamEvents:
+  get:
+    operationId: readRecordingStreamEvents
+    summary: Read one document's rrweb events as NDJSON, bypassing session attribution.
+    parameters:
+      - name: documentId
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: fromMs
+        in: query
+        schema:
+          type: integer
+          format: int64
+      - name: toMs
+        in: query
+        schema:
+          type: integer
+          format: int64
+    responses:
+      '200':
+        description: Newline-delimited rrweb events.
+        content:
+          application/x-ndjson:
+            schema:
+              type: string
+      '400':
+        $ref: ../responses.yaml#/BadRequest
+      '500':
+        $ref: ../responses.yaml#/InternalError
+
 ingest:
   post:
     operationId: appendRecordingEvents

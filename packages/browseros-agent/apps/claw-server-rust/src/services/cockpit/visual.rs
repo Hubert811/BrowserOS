@@ -84,20 +84,27 @@ impl SessionVisualService {
         let Some(session) = self.sessions.lookup(&session_key).await else {
             return Ok(None);
         };
-        self.capture_with_session(&session, true).await
+        self.capture_with_session(session.id().as_str(), true).await
     }
 
     /// Captures through a teardown-owned session lease after live request resolution has stopped.
     pub async fn capture_for_session(&self, session: &Arc<Session>) -> AppResult<Option<Vec<u8>>> {
-        self.capture_with_session(session, false).await
+        self.capture_with_session(session.id().as_str(), false).await
+    }
+
+    /// Captures by bare session id — for harness sessions (out-of-process
+    /// harness reporting) that exist in the audit trail and tab-claim ledger
+    /// but hold no live MCP `Session` object. Same pipeline and in-flight
+    /// guards as live captures; never requires the session to stay live.
+    pub async fn capture_by_session_id(&self, session_id: &str) -> AppResult<Option<Vec<u8>>> {
+        self.capture_with_session(session_id, false).await
     }
 
     async fn capture_with_session(
         &self,
-        session: &Arc<Session>,
+        session_id: &str,
         require_live_at_end: bool,
     ) -> AppResult<Option<Vec<u8>>> {
-        let session_id = session.id().as_str();
         self.session_tabs.drain_writes().await;
         let browser = match self.browser.session().await {
             Some(browser) => browser,

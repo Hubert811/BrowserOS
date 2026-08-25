@@ -1,0 +1,206 @@
+sessionStart:
+  post:
+    operationId: startHarnessSession
+    summary: Start an out-of-process harness session (append-only audit reporting).
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            properties:
+              sessionId:
+                type: string
+                description: Client-supplied Ulid-shaped session id; minted when absent.
+              agentId:
+                type: string
+                default: hub
+              slug:
+                type: string
+                default: hub
+              agentLabel:
+                type: string
+                default: hub-browser
+              clientName:
+                type: string
+                default: hub
+              clientVersion:
+                type: string
+    responses:
+      '200':
+        description: The session id to reference in subsequent harness reports.
+        content:
+          application/json:
+            schema:
+              $ref: ../schemas/harness.yaml#/HarnessSessionStartResponse
+      '400':
+        $ref: ../responses.yaml#/BadRequest
+      '500':
+        $ref: ../responses.yaml#/InternalError
+
+sessionEnd:
+  post:
+    operationId: endHarnessSession
+    summary: End a harness session and release its open tab-ownership windows.
+    parameters:
+      - $ref: ../parameters.yaml#/SessionId
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            properties:
+              kind:
+                type: string
+                default: normal
+              reason:
+                type: string
+    responses:
+      '200':
+        description: Session ended.
+        content:
+          application/json:
+            schema:
+              $ref: ../schemas/harness.yaml#/HarnessSessionEndResponse
+      '404':
+        $ref: ../responses.yaml#/NotFound
+      '500':
+        $ref: ../responses.yaml#/InternalError
+
+dispatchReport:
+  post:
+    operationId: reportHarnessDispatch
+    summary: Append one completed tool dispatch to the audit trail.
+    description: >-
+      For harnesses that drive the browser through their own connection (e.g.
+      hub over CDP) — mirrors the MCP dispatch audit row so the cockpit
+      timeline, session list, and replay attribution work identically.
+    parameters:
+      - $ref: ../parameters.yaml#/SessionId
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required: [toolName]
+            properties:
+              toolName:
+                type: string
+              pageId:
+                type: integer
+                format: int64
+              tabId:
+                type: integer
+                format: int64
+              targetId:
+                type: string
+              url:
+                type: string
+              title:
+                type: string
+              args:
+                type: object
+              resultMeta:
+                type: string
+                default: ok
+              durationMs:
+                type: integer
+                format: int64
+              createdAt:
+                type: integer
+                format: int64
+                description: Unix-epoch milliseconds.
+              dispatchId:
+                type: string
+              parentDispatchId:
+                type: string
+              agentId:
+                type: string
+              slug:
+                type: string
+              agentLabel:
+                type: string
+    responses:
+      '200':
+        description: Persisted row id.
+        content:
+          application/json:
+            schema:
+              $ref: ../schemas/harness.yaml#/HarnessDispatchResponse
+      '400':
+        $ref: ../responses.yaml#/BadRequest
+      '404':
+        $ref: ../responses.yaml#/NotFound
+      '500':
+        $ref: ../responses.yaml#/InternalError
+
+tabClaim:
+  post:
+    operationId: claimHarnessTab
+    summary: Open a tab-ownership window so recordings attribute to the harness session.
+    parameters:
+      - $ref: ../parameters.yaml#/SessionId
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required: [tabId]
+            properties:
+              tabId:
+                type: integer
+                format: int64
+              targetId:
+                type: string
+              claimedAt:
+                type: integer
+                format: int64
+                description: Unix-epoch milliseconds; defaults to now.
+              agentId:
+                type: string
+    responses:
+      '200':
+        description: Claim window opened.
+        content:
+          application/json:
+            schema:
+              $ref: ../schemas/harness.yaml#/HarnessClaimTabResponse
+      '400':
+        $ref: ../responses.yaml#/BadRequest
+      '404':
+        $ref: ../responses.yaml#/NotFound
+      '500':
+        $ref: ../responses.yaml#/InternalError
+
+tabRelease:
+  post:
+    operationId: releaseHarnessTab
+    summary: Close this session's open tab-ownership window.
+    parameters:
+      - $ref: ../parameters.yaml#/SessionId
+      - name: tabId
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    responses:
+      '200':
+        description: Claim window closed.
+        content:
+          application/json:
+            schema:
+              $ref: ../schemas/harness.yaml#/HarnessReleaseTabResponse
+      '400':
+        $ref: ../responses.yaml#/BadRequest
+      '404':
+        $ref: ../responses.yaml#/NotFound
+      '500':
+        $ref: ../responses.yaml#/InternalError

@@ -12,6 +12,61 @@ use crate::models;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
+pub struct RecordingStreamEntry {
+    #[serde(rename = "documentId")]
+    pub document_id: String,
+    #[serde(rename = "tabId")]
+    pub tab_id: i64,
+    #[serde(rename = "targetId", skip_serializing_if = "Option::is_none")]
+    pub target_id: Option<String>,
+    #[serde(rename = "firstEventAt")]
+    pub first_event_at: i64,
+    #[serde(rename = "lastEventAt")]
+    pub last_event_at: i64,
+    #[serde(rename = "sizeBytes")]
+    pub size_bytes: i64,
+    #[serde(rename = "eventCount")]
+    pub event_count: i64,
+    #[serde(rename = "hasGap")]
+    pub has_gap: bool,
+}
+
+impl RecordingStreamEntry {
+    pub fn new(
+        document_id: String,
+        tab_id: i64,
+        first_event_at: i64,
+        last_event_at: i64,
+        size_bytes: i64,
+        event_count: i64,
+        has_gap: bool,
+    ) -> RecordingStreamEntry {
+        RecordingStreamEntry {
+            document_id,
+            tab_id,
+            target_id: None,
+            first_event_at,
+            last_event_at,
+            size_bytes,
+            event_count,
+            has_gap,
+        }
+    }
+}
+
+#[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
+pub struct RecordingStreamList {
+    #[serde(rename = "streams")]
+    pub streams: Vec<RecordingStreamEntry>,
+}
+
+impl RecordingStreamList {
+    pub fn new(streams: Vec<RecordingStreamEntry>) -> RecordingStreamList {
+        RecordingStreamList { streams }
+    }
+}
+
+#[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AppendRecordingEventsResponse {
     #[serde(rename = "accepted")]
     pub accepted: i64,

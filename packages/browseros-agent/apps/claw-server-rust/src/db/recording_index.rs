@@ -132,6 +132,19 @@ impl From<tab_claims::Model> for LegacyClaimRow {
     }
 }
 
+/// One recording stream for the discovery listing (see `list_streams`).
+#[derive(Debug, Clone, FromQueryResult)]
+pub struct StreamListRow {
+    pub document_id: String,
+    pub tab_id: i64,
+    pub target_id: Option<String>,
+    pub first_event_at: i64,
+    pub last_event_at: i64,
+    pub size_bytes: i64,
+    pub event_count: i64,
+    pub has_gap: bool,
+}
+
 #[derive(Debug, Clone, FromQueryResult)]
 pub struct StreamMatchRow {
     pub document_id: String,
@@ -416,6 +429,34 @@ impl RecordingIndex {
 
     /// Every live recording stream's document id, for the replay-file orphan
     /// sweep to distinguish tracked files from drift left by a crashed writer.
+    /// Newest-first index of recorded streams, optionally bounded to a time
+    /// window and/or one Chrome tab. The discovery surface for out-of-process
+    /// harnesses that cannot see the claim table.
+    pub async fn list_streams(
+        &self,
+        from_ms: Option<i64>,
+        to_ms: Option<i64>,
+        tab_id: Option<i64>,
+        limit: i64,
+    ) -> AppResult<Vec<StreamListRow>> {
+        let mut query =
+            RecordingStreams::find().order_by_desc(recording_streams::Column::LastEventAt);
+        if let Some(from) = from_ms {
+            query = query.filter(recording_streams::Column::LastEventAt.gte(from));
+        }
+        if let Some(to) = to_ms {
+            query = query.filter(recording_streams::Column::FirstEventAt.lte(to));
+        }
+        if let Some(tab) = tab_id {
+            query = query.filter(recording_streams::Column::TabId.eq(tab));
+        }
+        Ok(query
+            .limit(limit.max(1) as u64)
+            .into_model::<StreamListRow>()
+            .all(self.db.connection())
+            .await?)
+    }
+
     pub async fn all_document_ids(&self) -> AppResult<Vec<String>> {
         Ok(RecordingStreams::find()
             .select_only()

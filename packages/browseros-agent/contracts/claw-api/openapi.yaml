@@ -28,6 +28,20 @@ paths:
     $ref: ./paths/recordings.yaml#/events
   /api/v1/recordings/events:
     $ref: ./paths/recordings.yaml#/ingest
+  /api/v1/recordings/streams:
+    $ref: ./paths/recordings.yaml#/streamList
+  /api/v1/recordings/streams/{documentId}/events:
+    $ref: ./paths/recordings.yaml#/streamEvents
+  /api/v1/harness/sessions:
+    $ref: ./paths/harness.yaml#/sessionStart
+  /api/v1/harness/sessions/{sessionId}/end:
+    $ref: ./paths/harness.yaml#/sessionEnd
+  /api/v1/harness/sessions/{sessionId}/dispatches:
+    $ref: ./paths/harness.yaml#/dispatchReport
+  /api/v1/harness/sessions/{sessionId}/tabs:
+    $ref: ./paths/harness.yaml#/tabClaim
+  /api/v1/harness/sessions/{sessionId}/tabs/{tabId}/release:
+    $ref: ./paths/harness.yaml#/tabRelease
   /api/v1/sessions/{sessionId}/preview:
     $ref: ./paths/sessions.yaml#/preview
   /api/v1/sessions/{sessionId}/screenshots:

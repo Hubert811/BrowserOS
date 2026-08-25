@@ -20,6 +20,7 @@ use ulid::Ulid;
 pub(crate) mod audit;
 mod cockpit;
 mod connections;
+mod harness;
 mod live;
 mod previews;
 mod recordings;
@@ -81,6 +82,28 @@ pub fn router(state: AppState) -> Router<AppState> {
             "/api/v1/recordings/events",
             post(recordings::append_document_events)
                 .layer(DefaultBodyLimit::max(RECORDING_INGEST_MAX_BYTES)),
+        )
+        .route("/api/v1/recordings/streams", get(harness::list_streams))
+        .route(
+            "/api/v1/recordings/streams/{document_id}/events",
+            get(harness::stream_events),
+        )
+        .route("/api/v1/harness/sessions", post(harness::start_session))
+        .route(
+            "/api/v1/harness/sessions/{session_id}/end",
+            post(harness::end_session),
+        )
+        .route(
+            "/api/v1/harness/sessions/{session_id}/dispatches",
+            post(harness::report_dispatch),
+        )
+        .route(
+            "/api/v1/harness/sessions/{session_id}/tabs",
+            post(harness::claim_tab),
+        )
+        .route(
+            "/api/v1/harness/sessions/{session_id}/tabs/{tab_id}/release",
+            post(harness::release_tab),
         )
         .route("/api/v1/connections", get(connections::list))
         .route(

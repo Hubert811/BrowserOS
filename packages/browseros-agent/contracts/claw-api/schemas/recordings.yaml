@@ -77,6 +77,45 @@ RecordingSegmentMetadata:
     legacy:
       type: boolean
       description: True when the source predates trustworthy Chrome document identity.
+RecordingStreamEntry:
+  type: object
+  additionalProperties: false
+  required: [documentId, tabId, firstEventAt, lastEventAt, sizeBytes, eventCount, hasGap]
+  properties:
+    documentId:
+      type: string
+    tabId:
+      type: integer
+      format: int64
+    targetId:
+      type: string
+    firstEventAt:
+      type: integer
+      format: int64
+      description: Unix-epoch milliseconds.
+    lastEventAt:
+      type: integer
+      format: int64
+      description: Unix-epoch milliseconds.
+    sizeBytes:
+      type: integer
+      format: int64
+    eventCount:
+      type: integer
+      format: int64
+    hasGap:
+      type: boolean
+
+RecordingStreamList:
+  type: object
+  additionalProperties: false
+  required: [streams]
+  properties:
+    streams:
+      type: array
+      items:
+        $ref: '#/components/schemas/RecordingStreamEntry'
+
 AppendRecordingEventsResponse:
   type: object
   additionalProperties: false

@@ -1902,3 +1902,340 @@ async fn audit_cleanup_runs_and_returns_usage() -> anyhow::Result<()> {
     assert!(body["usage"]["totalBytes"].is_number());
     Ok(())
 }
+
+#[tokio::test]
+async fn harness_reporting_surface_end_to_end() -> anyhow::Result<()> {
+    let app = test_app().await?;
+
+    // Start an out-of-process harness session with a client-supplied id.
+    let (status, _, bytes) = request(
+        &app.router,
+        "POST",
+        "/api/v1/harness/sessions",
+        Some("application/json"),
+        Body::from(
+            json!({
+                "sessionId": "01JZZHUBSESSION00000000000000",
+                "agentId": "hub",
+                "slug": "hub",
+                "agentLabel": "hub-browser",
+                "clientName": "hub",
+                "clientVersion": "0.2.0"
+            })
+            .to_string(),
+        ),
+    )
+    .await?;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        json_body(&bytes)?,
+        json!({ "sessionId": "01JZZHUBSESSION00000000000000" })
+    );
+
+    // Dispatches on unknown sessions are rejected with the canonical envelope.
+    let (status, _, bytes) = request(
+        &app.router,
+        "POST",
+        "/api/v1/harness/sessions/01JZZUNKNOWNSESSION0000000000/dispatches",
+        Some("application/json"),
+        Body::from(json!({ "toolName": "browser.click" }).to_string()),
+    )
+    .await?;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(json_body(&bytes)?["code"], "not_found");
+
+    // Report a dispatch the way hub would after executing one of its tools.
+    let (status, _, bytes) = request(
+        &app.router,
+        "POST",
+        "/api/v1/harness/sessions/01JZZHUBSESSION00000000000000/dispatches",
+        Some("application/json"),
+        Body::from(
+            json!({
+                "toolName": "browser.click",
+                "pageId": 3,
+                "tabId": 101,
+                "targetId": "target-7",
+                "url": "https://example.com/article",
+                "title": "Example",
+                "args": { "ref": "e12" },
+                "resultMeta": "ok",
+                "durationMs": 45
+            })
+            .to_string(),
+        ),
+    )
+    .await?;
+    assert_eq!(status, StatusCode::OK);
+    assert!(json_body(&bytes)?["dispatchId"].is_number());
+
+    // The harness session is now first-class in the cockpit session list.
+    let (status, _, bytes) =
+        request(&app.router, "GET", "/api/v1/sessions", None, Body::empty()).await?;
+    assert_eq!(status, StatusCode::OK);
+    let list = json_body(&bytes)?;
+    let hub_entry = list["items"]
+        .as_array()
+        .and_then(|items| {
+            items
+                .iter()
+                .find(|item| item["sessionId"] == "01JZZHUBSESSION00000000000000")
+        })
+        .cloned();
+    let hub_entry = hub_entry.expect("harness session appears in the session list");
+    assert_eq!(hub_entry["slug"], "hub");
+    assert_eq!(hub_entry["dispatchCount"], 1);
+
+    // Claim the tab the harness is driving.
+    let (status, _, _) = request(
+        &app.router,
+        "POST",
+        "/api/v1/harness/sessions/01JZZHUBSESSION00000000000000/tabs",
+        Some("application/json"),
+        Body::from(json!({ "tabId": 101, "targetId": "target-7", "claimedAt": 100 }).to_string()),
+    )
+    .await?;
+    assert_eq!(status, StatusCode::OK);
+
+    // Ingest rrweb events for that tab the way the browser extension does.
+    let recording_headers = [
+        ("x-recording-tab-id", "101"),
+        (
+            "x-recording-document-id",
+            "33D25F3CF060E81B14070BC356FF1871",
+        ),
+        ("x-recording-batch-id", "batch-hub-1"),
+    ];
+    let events = "{\"ts\":150,\"type\":2,\"data\":{\"node\":7}}\n{\"ts\":250,\"type\":3,\"data\":{\"node\":8}}\n";
+    let (status, _, bytes) = request_with_headers(
+        &app.router,
+        "POST",
+        "/api/v1/recordings/events",
+        Some("application/x-ndjson"),
+        &recording_headers,
+        events,
+    )
+    .await?;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json_body(&bytes)?["accepted"], 2);
+
+    // Recording attribution: the harness session now owns a replay.
+    let (status, _, bytes) = request(
+        &app.router,
+        "GET",
+        "/api/v1/sessions/01JZZHUBSESSION00000000000000/recording",
+        None,
+        Body::empty(),
+    )
+    .await?;
+    assert_eq!(status, StatusCode::OK);
+    let recording = json_body(&bytes)?;
+    assert_eq!(recording["hasData"], true);
+    assert_eq!(recording["tabs"].as_array().map(Vec::len), Some(1));
+
+    // Stream discovery surfaces the recorded document.
+    let (status, _, bytes) = request(
+        &app.router,
+        "GET",
+        "/api/v1/recordings/streams",
+        None,
+        Body::empty(),
+    )
+    .await?;
+    assert_eq!(status, StatusCode::OK);
+    let streams = json_body(&bytes)?;
+    let stream = streams["streams"]
+        .as_array()
+        .and_then(|items| {
+            items
+                .iter()
+                .find(|item| item["documentId"] == "33D25F3CF060E81B14070BC356FF1871")
+        })
+        .cloned()
+        .expect("ingested stream is listed");
+    assert_eq!(stream["tabId"], 101);
+    assert_eq!(stream["eventCount"], 2);
+
+    // Tab-scoped event reads bypass session attribution entirely.
+    let (status, _, bytes) = request(
+        &app.router,
+        "GET",
+        "/api/v1/recordings/streams/33D25F3CF060E81B14070BC356FF1871/events",
+        None,
+        Body::empty(),
+    )
+    .await?;
+    assert_eq!(status, StatusCode::OK);
+    let ndjson = String::from_utf8(bytes)?;
+    let lines: Vec<&str> = ndjson.lines().collect();
+    assert_eq!(lines.len(), 2);
+    assert!(lines[0].contains("\"ts\":150"));
+
+    // Time-window filtering narrows the read.
+    let (status, _, bytes) = request(
+        &app.router,
+        "GET",
+        "/api/v1/recordings/streams/33D25F3CF060E81B14070BC356FF1871/events?fromMs=200",
+        None,
+        Body::empty(),
+    )
+    .await?;
+    assert_eq!(status, StatusCode::OK);
+    let ndjson = String::from_utf8(bytes)?;
+    assert_eq!(ndjson.lines().count(), 1);
+    assert!(ndjson.contains("\"ts\":250"));
+
+    // Release the tab and end the session; the audit trail keeps the rows.
+    let (status, _, _) = request(
+        &app.router,
+        "POST",
+        "/api/v1/harness/sessions/01JZZHUBSESSION00000000000000/tabs/101/release",
+        None,
+        Body::empty(),
+    )
+    .await?;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, _, bytes) = request(
+        &app.router,
+        "POST",
+        "/api/v1/harness/sessions/01JZZHUBSESSION00000000000000/end",
+        Some("application/json"),
+        Body::from(json!({ "kind": "normal" }).to_string()),
+    )
+    .await?;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json_body(&bytes)?, json!({ "ended": true }));
+
+    let (status, _, bytes) = request(
+        &app.router,
+        "GET",
+        "/api/v1/sessions/01JZZHUBSESSION00000000000000",
+        None,
+        Body::empty(),
+    )
+    .await?;
+    assert_eq!(status, StatusCode::OK);
+    let detail = json_body(&bytes)?;
+    assert_eq!(detail["session"]["status"], "done");
+    Ok(())
+}
+
+#[tokio::test]
+async fn harness_streams_list_filters_and_validates() -> anyhow::Result<()> {
+    let app = test_app().await?;
+
+    // Empty index is an empty list, not an error.
+    let (status, _, bytes) = request(
+        &app.router,
+        "GET",
+        "/api/v1/recordings/streams",
+        None,
+        Body::empty(),
+    )
+    .await?;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        json_body(&bytes)?["streams"].as_array().map(Vec::len),
+        Some(0)
+    );
+
+    // Claim + ingest two documents on different tabs for one harness session.
+    let session_id = "01JZZHUBFILTERS000000000000000";
+    let (status, _, _) = request(
+        &app.router,
+        "POST",
+        "/api/v1/harness/sessions",
+        Some("application/json"),
+        Body::from(json!({ "sessionId": session_id }).to_string()),
+    )
+    .await?;
+    assert_eq!(status, StatusCode::OK);
+    for (tab, document) in [
+        (101, "33D25F3CF060E81B14070BC356FF1871"),
+        (102, "8395FF2EF4A1D8579F1917B3B54ADECE"),
+    ] {
+        let (status, _, _) = request(
+            &app.router,
+            "POST",
+            &format!("/api/v1/harness/sessions/{session_id}/tabs"),
+            Some("application/json"),
+            Body::from(json!({ "tabId": tab, "claimedAt": 100 }).to_string()),
+        )
+        .await?;
+        assert_eq!(status, StatusCode::OK);
+        let batch_id = format!("batch-{tab}");
+        let tab_id = tab.to_string();
+        let headers = [
+            ("x-recording-tab-id", tab_id.as_str()),
+            ("x-recording-document-id", document),
+            ("x-recording-batch-id", batch_id.as_str()),
+        ];
+        let (status, _, _) = request_with_headers(
+            &app.router,
+            "POST",
+            "/api/v1/recordings/events",
+            Some("application/x-ndjson"),
+            &headers,
+            "{\"ts\":120,\"type\":2,\"data\":{}}\n{\"ts\":180,\"type\":3,\"data\":{}}\n",
+        )
+        .await?;
+        assert_eq!(status, StatusCode::OK);
+    }
+
+    // Tab filter narrows to one stream.
+    let (status, _, bytes) = request(
+        &app.router,
+        "GET",
+        "/api/v1/recordings/streams?tabId=102",
+        None,
+        Body::empty(),
+    )
+    .await?;
+    assert_eq!(status, StatusCode::OK);
+    let streams = json_body(&bytes)?["streams"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert_eq!(streams.len(), 1);
+    assert_eq!(streams[0]["tabId"], 102);
+
+    // Time window that misses every event returns nothing.
+    let (status, _, bytes) = request(
+        &app.router,
+        "GET",
+        "/api/v1/recordings/streams?fromMs=10000",
+        None,
+        Body::empty(),
+    )
+    .await?;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        json_body(&bytes)?["streams"].as_array().map(Vec::len),
+        Some(0)
+    );
+
+    // Unknown document id reads as empty NDJSON (idempotent discovery).
+    let (status, _, bytes) = request(
+        &app.router,
+        "GET",
+        "/api/v1/recordings/streams/FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF/events",
+        None,
+        Body::empty(),
+    )
+    .await?;
+    assert_eq!(status, StatusCode::OK);
+    assert!(String::from_utf8(bytes)?.trim().is_empty());
+
+    // End-of-session teardown releases both claims.
+    let (status, _, _) = request(
+        &app.router,
+        "POST",
+        &format!("/api/v1/harness/sessions/{session_id}/end"),
+        Some("application/json"),
+        Body::from(json!({}).to_string()),
+    )
+    .await?;
+    assert_eq!(status, StatusCode::OK);
+    Ok(())
+}
