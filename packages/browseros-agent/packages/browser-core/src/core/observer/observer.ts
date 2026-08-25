@@ -2,7 +2,19 @@ import type { ProtocolApi } from '@browseros/cdp-protocol/protocol-api'
 import type { FrameId } from '../connection'
 import type { PageManager } from '../pages'
 import { diffSnapshotObservations, type SnapshotDiff } from '../snapshot/diff'
-import { type DocumentId, RefMap } from '../snapshot/refs'
+import {
+  collectDomFingerprints,
+  collectDomUnits,
+  DOM_UNIT_JS,
+  type DomFingerprint,
+  type DomUnit,
+  diffDomFingerprints,
+  INSPECT_JS,
+  type InspectDetail,
+  isInspectDetail,
+  mergeDomUnits,
+} from '../snapshot/dom-unit'
+import { type DocumentId, type RefEntry, RefMap } from '../snapshot/refs'
 import { renderSnapshot } from '../snapshot/render'
 import { fetchAxTree } from './ax-tree'
 import { findCursorHits } from './cursor-augment'
@@ -48,6 +60,8 @@ export class Observer {
   private baseline?: { text: string; url: string }
   private refs = new RefMap()
   private refScope?: RefScope
+  /** P3-5 — DOM fingerprints captured at the last snapshot/diff commit. */
+  private domBaseline?: DomFingerprint[]
 
   constructor(
     private readonly pages: PageManager,
@@ -58,14 +72,24 @@ export class Observer {
   async snapshot(): Promise<SnapshotResult> {
     const result = await this.capture()
     this.commit(result)
-    return result
+    // Awaited: the next diff's DOM baseline must correspond to THIS snapshot.
+    await this.commitDomBaseline()
+    // P3-5 — DOM-unit enrichment is best-effort and lands only in the
+    // returned text; the diff baseline keeps the pristine render so
+    // diffSnapshotObservations never sees the injected ` → unit` suffixes.
+    const text = await this.enrichWithDomUnits(result)
+    return text === result.text ? result : { ...result, text }
   }
 
   async diff(): Promise<SnapshotDiff> {
     const before = this.baseline
+    const beforeDom = this.domBaseline
     const result = await this.capture()
+    const axDiff = diffSnapshotObservations(before, result)
     this.commit(result)
-    return diffSnapshotObservations(before, result)
+    const afterDom = await this.domFingerprintsNow()
+    this.domBaseline = afterDom
+    return { ...axDiff, dom: diffDomFingerprints(beforeDom, afterDom) }
   }
 
   get lastRefs(): RefMap {
@@ -84,6 +108,43 @@ export class Observer {
       entry.frameId,
     )
     return resolveRefEntry(session, entry, axParams)
+  }
+
+  /**
+   * P3-5 — deep-probe one ref's backing element: full classes/attributes,
+   * ancestor path, verified candidate selectors, and an outerHTML head.
+   * Stale refs are re-resolved through the same two-tier logic as act.
+   */
+  async inspectRef(ref: string): Promise<InspectDetail> {
+    const entry = this.refs.get(ref)
+    if (!entry) {
+      throw new Error(`Unknown ref ${ref}; take a new snapshot.`)
+    }
+    await this.pages.getSession(this.pageId)
+    const { session, axParams } = this.frames.resolveFrameTarget(
+      this.pageId,
+      entry.frameId,
+    )
+    const { backendNodeId } = await resolveRefEntry(session, entry, axParams)
+    const resolved = await session.DOM.resolveNode({ backendNodeId })
+    const objectId = resolved.object?.objectId
+    if (!objectId) {
+      throw new Error(`Ref ${ref} no longer resolves to a live node.`)
+    }
+    try {
+      const call = await session.Runtime.callFunctionOn({
+        functionDeclaration: `function () {\n${DOM_UNIT_JS}\n${INSPECT_JS}\nreturn __inspectProbe(this);\n}`,
+        objectId,
+        returnByValue: true,
+      })
+      const value = call.result?.value
+      if (!isInspectDetail(value)) {
+        throw new Error(`Ref ${ref} inspect probe returned no detail.`)
+      }
+      return value
+    } finally {
+      await session.Runtime.releaseObject({ objectId }).catch(() => {})
+    }
   }
 
   private async capture(): Promise<CaptureResult> {
@@ -168,6 +229,51 @@ export class Observer {
     this.baseline = { text: result.text, url: result.url }
     this.refs = result.refs
     this.refScope = result.scope
+  }
+
+  /** Sweeps the main frame's DOM fingerprints (undefined on any failure). */
+  private async domFingerprintsNow(): Promise<DomFingerprint[] | undefined> {
+    try {
+      const pageSession = await this.pages.getSession(this.pageId)
+      return await collectDomFingerprints(pageSession.session)
+    } catch {
+      return undefined
+    }
+  }
+
+  /** P3-5 — snapshot commits a DOM baseline so the next diff has a
+   * pre-action reference sweep (fire-and-forget; undefined stays undefined). */
+  private async commitDomBaseline(): Promise<void> {
+    this.domBaseline = await this.domFingerprintsNow()
+  }
+
+  /**
+   * P3-5 — resolve every captured ref to its backing element and splice a
+   * DOM unit (tag/id/testid + stable selector) after each `[ref=eN]`.
+   * Entries are grouped by frame so each probe runs in its own frame's
+   * session. Any failure degrades to the pristine text.
+   */
+  private async enrichWithDomUnits(result: CaptureResult): Promise<string> {
+    try {
+      const entries = [...result.refs.byRef.values()]
+      if (entries.length === 0) return result.text
+      const byFrame = new Map<FrameId | undefined, RefEntry[]>()
+      for (const entry of entries) {
+        const group = byFrame.get(entry.frameId)
+        if (group) group.push(entry)
+        else byFrame.set(entry.frameId, [entry])
+      }
+      const units = new Map<string, DomUnit>()
+      for (const [frameId, group] of byFrame) {
+        const { session } = this.frames.resolveFrameTarget(this.pageId, frameId)
+        for (const [ref, unit] of await collectDomUnits(session, group)) {
+          units.set(ref, unit)
+        }
+      }
+      return mergeDomUnits(result.text, units)
+    } catch {
+      return result.text
+    }
   }
 
   private refsForCapture(state: MainFrameState): RefMap {

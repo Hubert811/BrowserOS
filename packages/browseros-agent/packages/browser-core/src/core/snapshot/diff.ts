@@ -1,3 +1,5 @@
+import type { DomChangeSummary } from './dom-unit'
+
 const BULLET = /^(\s*)- /
 const MAX_LCS_CELLS = 4_000_000
 
@@ -12,6 +14,13 @@ export interface SnapshotDiff {
   urlChanged?: true
   beforeUrl?: string
   afterUrl?: string
+  /**
+   * P3-5 — DOM-dimension changes (fingerprint set diff), present only when
+   * both sweeps ran and something actually appeared/disappeared. Independent
+   * of the AX `changed` flag: a spinner div can appear while the AX tree
+   * (interactive roles only) stays identical.
+   */
+  dom?: DomChangeSummary
 }
 
 export interface DiffOptions {
