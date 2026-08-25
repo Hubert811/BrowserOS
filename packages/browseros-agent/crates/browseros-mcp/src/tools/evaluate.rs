@@ -22,6 +22,7 @@ Use this for page-state reads or small DOM scripts that are awkward with read/gr
 Return a value to read it back.";
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct EvaluateArgs {
     /// Page id from `tabs`.
     page: u32,

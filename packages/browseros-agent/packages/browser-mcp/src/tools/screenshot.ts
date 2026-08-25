@@ -8,10 +8,12 @@ const DEFAULT_SCREENSHOT_FORMAT = 'jpeg'
 const DEFAULT_SCREENSHOT_QUALITY = 80
 const DEFAULT_SCREENSHOT_SIZE = { width: 1024, height: 768 } as const
 const screenshotFormat = z.enum(['jpeg', 'png', 'webp'])
-const screenshotSize = z.object({
-  width: z.number().int().positive().max(4096).default(1024),
-  height: z.number().int().positive().max(4096).default(768),
-})
+const screenshotSize = z
+  .object({
+    width: z.number().int().positive().max(4096).default(1024),
+    height: z.number().int().positive().max(4096).default(768),
+  })
+  .strict()
 
 type ScreenshotFormat = z.infer<typeof screenshotFormat>
 type ScreenshotSize = z.infer<typeof screenshotSize>
@@ -50,19 +52,23 @@ export const screenshot = defineTool({
   name: 'screenshot',
   description:
     'Capture a screenshot of the page, returned inline. Defaults to JPEG quality 80 around 1024x768; prefer snapshot for structure/actions.',
-  input: z.object({
-    page: z.number().int(),
-    format: screenshotFormat.default(DEFAULT_SCREENSHOT_FORMAT),
-    quality: z.number().int().min(0).max(100).optional(),
-    size: screenshotSize
-      .optional()
-      .describe('Max viewport capture size. Defaults to 1024x768.'),
-    fullPage: z.boolean().optional().describe('Capture beyond the viewport.'),
-    annotate: z
-      .boolean()
-      .optional()
-      .describe('Overlay numbered refs from a fresh snapshot. Defaults false.'),
-  }),
+  input: z
+    .object({
+      page: z.number().int(),
+      format: screenshotFormat.default(DEFAULT_SCREENSHOT_FORMAT),
+      quality: z.number().int().min(0).max(100).optional(),
+      size: screenshotSize
+        .optional()
+        .describe('Max viewport capture size. Defaults to 1024x768.'),
+      fullPage: z.boolean().optional().describe('Capture beyond the viewport.'),
+      annotate: z
+        .boolean()
+        .optional()
+        .describe(
+          'Overlay numbered refs from a fresh snapshot. Defaults false.',
+        ),
+    })
+    .strict(),
   annotations: { title: 'Take screenshot', readOnlyHint: true },
   handler: async (args, ctx) => {
     const fullPage = args.fullPage ?? false
