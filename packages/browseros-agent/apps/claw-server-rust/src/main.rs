@@ -61,6 +61,18 @@ async fn run(
     stdio_mode: bool,
 ) -> anyhow::Result<()> {
     let state = runtime.state();
+    // P3-6 (T1): provision ~/.hub/bin/hub from the version dir's bundled
+    // hub distribution (idempotent; silent-fail never blocks startup).
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+    if let Some(home) = home {
+        match claw_server_rust::services::hub_provision::provision(
+            &std::env::current_exe().unwrap_or_default(),
+            &home,
+        ) {
+            claw_server_rust::services::hub_provision::ProvisionOutcome::NotShipped => {}
+            outcome => tracing::debug!(?outcome, "hub provision"),
+        }
+    }
     state.browser.wait_for_initial_attempt().await;
     let initial_browser = state.browser.state();
     if initial_browser.connected && !state.tab_registry.is_ready(initial_browser.epoch) {

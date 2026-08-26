@@ -4,6 +4,7 @@ pub mod browser;
 pub mod cockpit;
 pub mod first_run;
 pub mod harness;
+pub mod hub_provision;
 pub mod harness_skills;
 pub mod helpers;
 pub mod profiles;
