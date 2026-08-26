@@ -1,6 +1,6 @@
 import type { BrowserSession } from '@browseros/browser-core/core/session'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
-import type { ZodRawShape } from 'zod'
+import type { ZodObject, ZodRawShape } from 'zod'
 import { executeTool } from './framework'
 import {
   type BrowserOutputFileAccess,
@@ -12,8 +12,8 @@ type RegisterFn = (
   name: string,
   config: {
     description: string
-    inputSchema?: ZodRawShape
-    outputSchema?: ZodRawShape
+    inputSchema?: ZodObject<ZodRawShape>
+    outputSchema?: ZodObject<ZodRawShape>
     annotations?: Record<string, unknown>
   },
   handler: (
@@ -133,8 +133,14 @@ export function registerBrowserTools(
       tool.name,
       {
         description: tool.description,
-        inputSchema: tool.input.shape,
-        ...(tool.output && { outputSchema: tool.output.shape }),
+        // Pass the ZodObject itself, NOT its .shape: the SDK's
+        // normalizeObjectSchema rebuilds a raw shape into a permissive
+        // z.object and strips unknown keys before any strict check runs —
+        // silently defeating the .strict() contract (#2432). A constructed
+        // ZodObject is used as-is, so unknown keys fail at the SDK's input
+        // validation with a clear message.
+        inputSchema: tool.input,
+        ...(tool.output && { outputSchema: tool.output }),
         ...(tool.annotations && {
           annotations: tool.annotations as Record<string, unknown>,
         }),

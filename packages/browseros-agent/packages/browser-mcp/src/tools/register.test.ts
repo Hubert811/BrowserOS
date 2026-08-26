@@ -74,16 +74,30 @@ describe('registerBrowserTools', () => {
       BROWSER_TOOLS.map((tool) => tool.name),
     )
     expect(fake.configs.get('tabs')?.inputSchema).toBeDefined()
-    expect(
-      Object.keys(
-        fake.configs.get('tabs')?.inputSchema as Record<string, unknown>,
-      ).sort(),
-    ).toEqual(['action', 'background', 'page', 'url'])
-    expect(
-      Object.keys(
-        fake.configs.get('windows')?.inputSchema as Record<string, unknown>,
-      ).sort(),
-    ).toEqual(['action', 'windowId'])
+    // Registered schemas are the ZodObjects themselves (strict contract);
+    // field names come off .shape.
+    const tabsSchema = fake.configs.get('tabs')?.inputSchema as {
+      shape: Record<string, unknown>
+      safeParse: (v: unknown) => { success: boolean }
+    }
+    expect(Object.keys(tabsSchema.shape).sort()).toEqual([
+      'action',
+      'background',
+      'page',
+      'url',
+    ])
+    // The registered schema must reject unknown keys on its own (#2432):
+    // a raw shape would let the SDK rebuild a permissive z.object.
+    expect(tabsSchema.safeParse({ action: 'list', pagee: 1 }).success).toBe(
+      false,
+    )
+    const windowsSchema = fake.configs.get('windows')?.inputSchema as {
+      shape: Record<string, unknown>
+    }
+    expect(Object.keys(windowsSchema.shape).sort()).toEqual([
+      'action',
+      'windowId',
+    ])
     expect(fake.configs.get('snapshot')?.annotations).toEqual({
       title: 'Snapshot accessibility tree',
       readOnlyHint: true,
