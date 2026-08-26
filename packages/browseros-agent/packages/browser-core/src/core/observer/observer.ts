@@ -211,7 +211,19 @@ export class Observer {
         session,
         stitch.backendNodeId,
       )
-      if (!childFrameId) continue
+      // B2 hardening: an iframe we cannot resolve or capture used to vanish
+      // silently — the agent saw `- iframe` with nothing under it and could
+      // not tell "empty frame" from "capture failed". Emit a notice line so
+      // the gap is visible and actionable (frames + evaluate can still reach
+      // the frame when the AX tree is not available).
+      if (!childFrameId) {
+        lines.splice(
+          stitch.lineIndex + 1,
+          0,
+          `${'  '.repeat(stitch.depth + 1)}- (frame content unavailable — use frames + evaluate {frame} to probe it)`,
+        )
+        continue
+      }
       const childText = await this.captureFrame(
         childFrameId,
         refs,
@@ -220,7 +232,15 @@ export class Observer {
         rootSession,
         frameDocuments,
       ).catch(() => '')
-      if (childText) lines.splice(stitch.lineIndex + 1, 0, childText)
+      if (childText) {
+        lines.splice(stitch.lineIndex + 1, 0, childText)
+      } else {
+        lines.splice(
+          stitch.lineIndex + 1,
+          0,
+          `${'  '.repeat(stitch.depth + 1)}- (frame content unavailable — use frames + evaluate {frame} to probe it)`,
+        )
+      }
     }
     return lines.join('\n')
   }

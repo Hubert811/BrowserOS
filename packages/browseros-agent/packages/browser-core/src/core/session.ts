@@ -2,7 +2,7 @@ import type { ProtocolApi } from '@browseros/cdp-protocol/protocol-api'
 import type { CdpConnection } from './connection'
 import { Input } from './input/input'
 import { Navigation } from './navigation'
-import { FrameRegistry } from './observer/frames'
+import { FrameRegistry, type FrameTarget } from './observer/frames'
 import { Observer } from './observer/observer'
 import { PageManager, type PageManagerHooks } from './pages'
 import {
@@ -37,6 +37,17 @@ export class BrowserSession {
     this.connection.Target.on('detachedFromTarget', (params) => {
       if (params.sessionId) this.pages.detachSession(params.sessionId)
     })
+  }
+
+  /**
+   * A1 (frames/evaluate contract) — public frame-target resolution for
+   * consumers outside the observer: same-origin frames resolve to the page
+   * session with a frameId param, cross-origin OOPIF frames to their own
+   * dedicated session (both usable for Runtime evaluation via an isolated
+   * world on the resolved session).
+   */
+  frameTarget(pageId: number, frameId: string | undefined): FrameTarget {
+    return this.frames.resolveFrameTarget(pageId, frameId)
   }
 
   /** Per-page observation (snapshot + diff), created lazily and cached. */
