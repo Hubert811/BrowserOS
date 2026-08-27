@@ -186,7 +186,19 @@ export class Observer {
       this.pageId,
       frameId,
     )
-    const nodes = await fetchAxTree(session, axParams)
+    let nodes = await fetchAxTree(session, axParams)
+    // B2 residual — one-shot lazy-AX race: Chromium occasionally has not
+    // computed a child frame's AX tree at the moment we ask (observed ~1/5
+    // snapshots on a fully loaded iframe: getFullAXTree(frameId) returned
+    // [] while a query a moment later returned the full 1428-node tree).
+    // One bounded retry on an EMPTY child tree converts the race from
+    // "agent sees a blind frame and must re-snapshot" into "the snapshot
+    // just takes 400ms longer". A genuinely empty frame pays the same one
+    // retry, then falls through to the stitch notice line.
+    if (nodes.length === 0 && frameId !== undefined) {
+      await new Promise((resolve) => setTimeout(resolve, 400))
+      nodes = await fetchAxTree(session, axParams)
+    }
     const cursorHits = await findCursorHits(session, frameId).catch(
       () => new Map(),
     )
