@@ -1,5 +1,7 @@
 import type { ProtocolApi } from '@browseros/cdp-protocol/protocol-api'
 
+import type { FrameId } from '../connection'
+
 // Finds elements that behave as interactive but carry no ARIA role (cursor:pointer divs, onclick
 // handlers, tabindex, contenteditable) — the SPA pattern the accessibility tree misses. Tags each
 // match with a temporary attribute so its backendNodeId can be recovered, then cleans up.
@@ -33,7 +35,21 @@ const CURSOR_SCAN_JS = `(function(){
     if(hasOnClick)reasons.push('onclick');
     if(hasTabIndex)reasons.push('tabindex');
     if(editable)reasons.push('contenteditable');
-    out.push({marker:String(i),reasons:reasons});
+    // Identifying label — priority: nearest ancestor whose text ADDS content
+    // beyond the hit itself (label-column layouts keep the label in a sibling
+    // of the hit, so that ancestor's text is "label + placeholder" and
+    // disambiguates a grid of identical placeholders); own text is the
+    // fallback; climbing stops at the first oversized (container) ancestor.
+    var own=(el.textContent||'').trim();
+    var label=own.length>0&&own.length<=60?own:'';
+    var anc=el.parentElement;
+    for(var k=0;k<3&&anc;k++){
+      var at=(anc.textContent||'').trim();
+      if(at.length>60)break;
+      if(at&&at!==own){label=at;break}
+      anc=anc.parentElement;
+    }
+    out.push({marker:String(i),reasons:reasons,label:label});
   }
   return out;
 })()`
@@ -41,19 +57,47 @@ const CURSOR_SCAN_JS = `(function(){
 interface ScanHit {
   marker: string
   reasons: string[]
+  label?: string
 }
 
-/** backendNodeId → reasons for cursor-interactive elements in this frame. Best-effort. */
+/** Rendered alongside the node: why it counts as interactive + an
+ * identifying label when the AX tree gives the node no accessible name. */
+export interface CursorHit {
+  reasons: string[]
+  label?: string
+}
+
+/**
+ * backendNodeId → reasons for cursor-interactive elements in this frame. Best-effort.
+ *
+ * Frame targeting: Runtime.evaluate carries no frameId param, so on a session
+ * that hosts multiple same-origin frames the scan would silently run in the
+ * MAIN frame's world — child-frame cursor hits (QuickBI-style custom filter
+ * widgets with no ARIA) never surfaced. When a frameId is given, run the scan
+ * and the per-hit lookups inside an isolated world for that frame.
+ */
 export async function findCursorHits(
   session: ProtocolApi,
-): Promise<Map<number, string[]>> {
-  const hits = new Map<number, string[]>()
+  frameId?: FrameId,
+): Promise<Map<number, CursorHit>> {
+  const hits = new Map<number, CursorHit>()
+
+  let contextId: number | undefined
+  if (frameId !== undefined) {
+    try {
+      const world = await session.Page.createIsolatedWorld({ frameId })
+      contextId = world.executionContextId
+    } catch {
+      return hits
+    }
+  }
 
   let found: ScanHit[] | undefined
   try {
     const result = await session.Runtime.evaluate({
       expression: CURSOR_SCAN_JS,
       returnByValue: true,
+      ...(contextId !== undefined && { contextId }),
     })
     found = result.result?.value as ScanHit[] | undefined
   } catch {
@@ -66,12 +110,14 @@ export async function findCursorHits(
       const query = await session.Runtime.evaluate({
         expression: `document.querySelector('[data-__bcid="${hit.marker}"]')`,
         returnByValue: false,
+        ...(contextId !== undefined && { contextId }),
       })
       const objectId = query.result?.objectId
       if (!objectId) continue
       const described = await session.DOM.describeNode({ objectId })
       const backendNodeId = described.node?.backendNodeId
-      if (backendNodeId !== undefined) hits.set(backendNodeId, hit.reasons)
+      if (backendNodeId !== undefined)
+        hits.set(backendNodeId, { reasons: hit.reasons, label: hit.label })
     } catch {
       // element vanished between scan and resolve
     }
@@ -81,6 +127,7 @@ export async function findCursorHits(
     expression:
       "document.querySelectorAll('[data-__bcid]').forEach(function(e){e.removeAttribute('data-__bcid')})",
     returnByValue: true,
+    ...(contextId !== undefined && { contextId }),
   }).catch(() => {})
 
   return hits

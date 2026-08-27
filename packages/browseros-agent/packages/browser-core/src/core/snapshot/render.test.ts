@@ -135,7 +135,7 @@ describe('renderSnapshot', () => {
     ]
     const out = renderSnapshot(nodes, {
       refs: new RefMap(),
-      cursorHits: new Map([[42, ['onclick']]]),
+      cursorHits: new Map([[42, { reasons: ['onclick'] }]]),
     })
     expect(out.text).toBe('- generic "Fake button" [ref=e1] [cursor=pointer]')
   })
@@ -179,7 +179,7 @@ describe('renderSnapshot', () => {
     ]
     const out = renderSnapshot(nodes, {
       refs: new RefMap(),
-      cursorHits: new Map([[9, ['cursor:pointer']]]),
+      cursorHits: new Map([[9, { reasons: ['cursor:pointer'] }]]),
     })
     expect(out.text).toBe('- generic [ref=e1] [cursor=pointer]')
   })

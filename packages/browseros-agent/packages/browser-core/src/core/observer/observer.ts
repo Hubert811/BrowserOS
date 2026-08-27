@@ -187,8 +187,8 @@ export class Observer {
       frameId,
     )
     const nodes = await fetchAxTree(session, axParams)
-    const cursorHits = await findCursorHits(session).catch(
-      () => new Map<number, string[]>(),
+    const cursorHits = await findCursorHits(session, frameId).catch(
+      () => new Map(),
     )
     const documentId = await this.stableDocumentIdForFrame(
       rootSession,

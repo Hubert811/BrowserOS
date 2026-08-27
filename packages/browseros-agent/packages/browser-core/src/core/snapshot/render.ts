@@ -1,3 +1,4 @@
+import type { CursorHit } from '../observer/cursor-augment'
 import type { AXNode } from './ax-types'
 import type { DocumentId, FrameId, RefMap } from './refs'
 import { INTERACTIVE_ROLES, ROOT_ROLES, SKIP_ROLES, VALUE_ROLES } from './roles'
@@ -24,7 +25,7 @@ export interface RenderOptions {
   frameId?: FrameId
   documentId?: DocumentId
   /** backendNodeId → reasons, from the DOM cursor-augmentation pass. */
-  cursorHits?: Map<number, string[]>
+  cursorHits?: Map<number, CursorHit>
   /** Extra indent levels to prepend (used when splicing a child frame under its iframe line). */
   baseDepth?: number
 }
@@ -109,19 +110,27 @@ function formatLine(
   depth: number,
   opts: RenderOptions,
 ): string {
-  let line = `${'  '.repeat(depth)}- ${role}`
-  if (name) line += ` ${JSON.stringify(name)}`
-
-  for (const state of formatStates(node)) line += ` [${state}]`
-
   const backendNodeId = node.backendDOMNodeId
-  const cursorReasons =
+  const cursorHit =
     backendNodeId !== undefined
       ? opts.cursorHits?.get(backendNodeId)
       : undefined
+  // A cursor hit with no accessible name gets its harvested label as the
+  // display name — without it, custom-widget grids (QuickBI-style filter
+  // fields) render as a wall of identical anonymous generics.
+  const displayName =
+    name ||
+    (cursorHit?.label !== undefined && cursorHit.label !== ''
+      ? cursorHit.label
+      : '')
+
+  let line = `${'  '.repeat(depth)}- ${role}`
+  if (displayName) line += ` ${JSON.stringify(displayName)}`
+
+  for (const state of formatStates(node)) line += ` [${state}]`
   const actionable =
     backendNodeId !== undefined &&
-    (INTERACTIVE_ROLES.has(role) || cursorReasons !== undefined)
+    (INTERACTIVE_ROLES.has(role) || cursorHit !== undefined)
 
   if (actionable) {
     const ref = opts.refs.mint({
@@ -133,7 +142,7 @@ function formatLine(
     })
     line += ` [ref=${ref}]`
   }
-  if (cursorReasons !== undefined) line += ' [cursor=pointer]'
+  if (cursorHit !== undefined) line += ' [cursor=pointer]'
 
   if (VALUE_ROLES.has(role)) {
     const value = strVal(node.value)
