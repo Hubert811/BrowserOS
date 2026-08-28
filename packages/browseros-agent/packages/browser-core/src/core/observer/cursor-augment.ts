@@ -40,8 +40,13 @@ const CURSOR_SCAN_JS = `(function(){
     // of the hit, so that ancestor's text is "label + placeholder" and
     // disambiguates a grid of identical placeholders); own text is the
     // fallback; climbing stops at the first oversized (container) ancestor.
+    // Long own text must TRUNCATE, not drop (bug #23): QuickBI enum fields
+    // holding dozens of values reach 1200+ chars — dropped labels rendered
+    // the hit as an anonymous generic, so the field vanished from snapshot
+    // text search exactly when verification mattered most. Cap aligns with
+    // the DOM generator's maxTextLength (120).
     var own=(el.textContent||'').trim();
-    var label=own.length>0&&own.length<=60?own:'';
+    var label=own.length>0?(own.length<=120?own:own.slice(0,117)+'…'):'';
     var anc=el.parentElement;
     for(var k=0;k<3&&anc;k++){
       var at=(anc.textContent||'').trim();
