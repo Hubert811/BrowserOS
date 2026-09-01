@@ -1,6 +1,7 @@
 import { storage } from '@wxt-dev/storage'
 import { sessionStorage } from '@/lib/auth/sessionStorage'
 import { Capabilities } from '@/lib/browseros/capabilities'
+import { createConversationPanelBroker } from '@/lib/browseros/conversationPanelBroker.browser'
 import { getHealthCheckUrl, getMcpServerUrl } from '@/lib/browseros/helpers'
 import {
   ensureSidePanelRuntimeStateLoaded,
@@ -24,7 +25,6 @@ import {
 import { onServerMessage } from '@/lib/messaging/server/serverMessages'
 import { onOpenSidePanelWithSearch } from '@/lib/messaging/sidepanel/openSidepanelWithSearch'
 import { authRedirectPathStorage } from '@/lib/onboarding/onboardingStorage'
-import { syncOnboardingProfile } from '@/lib/onboarding/syncOnboardingProfile'
 import {
   setupScheduledJobsSyncToBackend,
   syncScheduledJobs,
@@ -49,6 +49,11 @@ const cleanupLegacyToolApprovalStorage = async () => {
 }
 
 export default defineBackground(() => {
+  // One background broker owns the long-lived server subscription and all
+  // panel-routing effects; individual React panels can come and go freely.
+  const conversationPanelBroker = createConversationPanelBroker()
+  void conversationPanelBroker.start()
+
   registerSidePanelOpenStateListeners()
   ensureSidePanelRuntimeStateLoaded().catch(() => null)
 
@@ -91,9 +96,6 @@ export default defineBackground(() => {
   chrome.runtime.onInstalled.addListener((details) => {
     if (details.reason === chrome.runtime.OnInstalledReason.INSTALL) {
       initializeSidePanelOptions().catch(() => null)
-      chrome.tabs.create({
-        url: chrome.runtime.getURL('app.html#/onboarding'),
-      })
     }
 
     if (details.reason === chrome.runtime.OnInstalledReason.UPDATE) {
@@ -156,9 +158,6 @@ export default defineBackground(() => {
       } catch {}
       try {
         await syncScheduledJobs()
-      } catch {}
-      try {
-        await syncOnboardingProfile(newSession.user.id)
       } catch {}
     }
   })
