@@ -183,4 +183,90 @@ describe('renderSnapshot', () => {
     })
     expect(out.text).toBe('- generic [ref=e1] [cursor=pointer]')
   })
+
+  test('synthesizes name for unnamed paragraph from its text leaf', () => {
+    const nodes: AXNode[] = [
+      ax('1', 'RootWebArea', { children: ['2'] }),
+      ax('2', 'dialog', {
+        name: name('探针弹窗'),
+        backendDOMNodeId: 10,
+        children: ['3', '4'],
+      }),
+      ax('3', 'paragraph', { children: ['5'] }),
+      ax('4', 'button', { name: name('确定'), backendDOMNodeId: 11 }),
+      ax('5', 'StaticText', { name: name('您确认要取消吗？') }),
+    ]
+    expect(renderSnapshot(nodes, { refs: new RefMap() }).text).toBe(
+      [
+        '- dialog "探针弹窗"',
+        '  - paragraph "您确认要取消吗？"',
+        '  - button "确定" [ref=e1]',
+      ].join('\n'),
+    )
+  })
+
+  test('lifts span-wrapped dialog message through unnamed generics', () => {
+    const nodes: AXNode[] = [
+      ax('1', 'RootWebArea', { children: ['2', '6'] }),
+      ax('2', 'generic', { children: ['3', '4', '5'] }),
+      ax('3', 'generic', { children: ['7'] }),
+      ax('4', 'generic', { children: ['8'] }),
+      ax('5', 'generic', { children: ['9', '10'] }),
+      ax('6', 'generic', { children: ['11', '12'] }),
+      ax('7', 'StaticText', { name: name('取消申请') }),
+      ax('8', 'StaticText', { name: name('您确认要取消整个售后申请吗？') }),
+      ax('9', 'button', { name: name('确认'), backendDOMNodeId: 21 }),
+      ax('10', 'button', { name: name('取消'), backendDOMNodeId: 22 }),
+      ax('11', 'StaticText', { name: name('确认') }),
+      ax('12', 'StaticText', { name: name('取消') }),
+    ]
+    expect(renderSnapshot(nodes, { refs: new RefMap() }).text).toBe(
+      [
+        '- generic "取消申请"',
+        '- generic "您确认要取消整个售后申请吗？"',
+        '- button "确认" [ref=e1]',
+        '- button "取消" [ref=e2]',
+        '- generic "确认 取消"',
+      ].join('\n'),
+    )
+  })
+
+  test('surfaces direct text next to controls in mixed containers', () => {
+    const nodes: AXNode[] = [
+      ax('1', 'RootWebArea', { children: ['2'] }),
+      ax('2', 'generic', { children: ['3', '4'] }),
+      ax('3', 'StaticText', { name: name('步骤一：填写信息') }),
+      ax('4', 'button', { name: name('下一步'), backendDOMNodeId: 30 }),
+    ]
+    expect(renderSnapshot(nodes, { refs: new RefMap() }).text).toBe(
+      ['- generic "步骤一：填写信息"', '  - button "下一步" [ref=e1]'].join(
+        '\n',
+      ),
+    )
+  })
+
+  test('does not consume cursor-interactive children into synthesized names', () => {
+    const nodes: AXNode[] = [
+      ax('1', 'RootWebArea', { children: ['2'] }),
+      ax('2', 'generic', { children: ['3'] }),
+      ax('3', 'generic', { backendDOMNodeId: 40, children: ['4'] }),
+      ax('4', 'StaticText', { name: name('点我') }),
+    ]
+    const out = renderSnapshot(nodes, {
+      refs: new RefMap(),
+      cursorHits: new Map([[40, { reasons: ['cursor:pointer'] }]]),
+    })
+    expect(out.text).toBe('- generic [ref=e1] [cursor=pointer]')
+  })
+
+  test('caps synthesized names at 300 characters', () => {
+    const long = '啊'.repeat(400)
+    const nodes: AXNode[] = [
+      ax('1', 'RootWebArea', { children: ['2'] }),
+      ax('2', 'paragraph', { children: ['3'] }),
+      ax('3', 'StaticText', { name: name(long) }),
+    ]
+    const out = renderSnapshot(nodes, { refs: new RefMap() })
+    expect(out.text).toBe(`- paragraph "${'啊'.repeat(300)}…"`)
+  })
 })

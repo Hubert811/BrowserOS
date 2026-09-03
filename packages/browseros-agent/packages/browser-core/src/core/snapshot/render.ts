@@ -4,6 +4,13 @@ import type { DocumentId, FrameId, RefMap } from './refs'
 import { INTERACTIVE_ROLES, ROOT_ROLES, SKIP_ROLES, VALUE_ROLES } from './roles'
 
 const IFRAME_ROLES: ReadonlySet<string> = new Set(['Iframe', 'iframe'])
+const TEXT_LEAF_ROLES: ReadonlySet<string> = new Set([
+  'StaticText',
+  'InlineTextBox',
+  'text',
+])
+const TRANSPARENT_ROLES: ReadonlySet<string> = new Set(['generic', 'group'])
+const MAX_SYNTHESIZED_NAME_LENGTH = 300
 
 export interface IframeStitch {
   /** The iframe element, used to resolve its child frameId for stitching. */
@@ -42,15 +49,74 @@ export function renderSnapshot(
   const lines: string[] = []
   const iframes: IframeStitch[] = []
 
+  const isCursorHitNode = (node: AXNode): boolean =>
+    node.backendDOMNodeId !== undefined &&
+    (opts.cursorHits?.has(node.backendDOMNodeId) ?? false)
+
+  /** Concatenated text when the subtree holds only text leaves inside unnamed
+   * containers; undefined when any rendered element (named node, control,
+   * cursor hit) appears — those must stay visible with their own refs. */
+  const textOnlyContents = (node: AXNode): string | undefined => {
+    const role = node.ignored ? undefined : strVal(node.role)
+    if (role !== undefined && TEXT_LEAF_ROLES.has(role)) {
+      return strVal(node.name)
+    }
+    if (role === 'LineBreak') return ''
+    const transparent =
+      role === undefined || (TRANSPARENT_ROLES.has(role) && !strVal(node.name))
+    if (!transparent || isCursorHitNode(node)) return undefined
+    const parts: string[] = []
+    for (const childId of node.childIds ?? []) {
+      const child = byId.get(childId)
+      if (!child) continue
+      const text = textOnlyContents(child)
+      if (text === undefined) return undefined
+      if (text) parts.push(text)
+    }
+    return parts.join(' ')
+  }
+
+  /** Direct text-leaf children, for containers that mix text with controls. */
+  const directTexts = (node: AXNode): string[] => {
+    const texts: string[] = []
+    for (const childId of node.childIds ?? []) {
+      const child = byId.get(childId)
+      if (!child) continue
+      const role = child.ignored ? undefined : strVal(child.role)
+      if (role !== undefined && TEXT_LEAF_ROLES.has(role)) {
+        const text = strVal(child.name)
+        if (text) texts.push(text)
+      }
+    }
+    return texts
+  }
+
   const visit = (nodeId: string, depth: number): void => {
     const node = byId.get(nodeId)
     if (!node) return
 
     const role = node.ignored ? undefined : strVal(node.role)
-    const name = strVal(node.name)
-    const isCursorHit =
-      node.backendDOMNodeId !== undefined &&
-      (opts.cursorHits?.has(node.backendDOMNodeId) ?? false)
+    let name = strVal(node.name)
+    const isCursorHit = isCursorHitNode(node)
+
+    // Name-from-contents: text inside unnamed containers is otherwise
+    // invisible — text leaves are skipped (SKIP_ROLES) and Chromium gives
+    // plain <p>/<span>/<div> blocks no accessible name.
+    let synthesized = false
+    if (!name && !isCursorHit) {
+      const deep = textOnlyContents(node)
+      if (deep) {
+        name = truncateName(deep)
+        synthesized = true
+      } else if (
+        role !== undefined &&
+        !SKIP_ROLES.has(role) &&
+        !ROOT_ROLES.has(role)
+      ) {
+        const direct = directTexts(node)
+        if (direct.length > 0) name = truncateName(direct.join(' '))
+      }
+    }
 
     if (isDropped(role, name, isCursorHit)) {
       for (const childId of node.childIds ?? []) visit(childId, depth)
@@ -72,6 +138,7 @@ export function renderSnapshot(
     }
 
     lines.push(formatLine(node, role as string, name, base + depth, opts))
+    if (synthesized) return
     for (const childId of node.childIds ?? []) visit(childId, depth + 1)
   }
 
@@ -186,4 +253,9 @@ function formatStates(node: AXNode): string[] {
 
 function strVal(value: AXNode['role']): string {
   return typeof value?.value === 'string' ? value.value : ''
+}
+
+function truncateName(text: string): string {
+  if (text.length <= MAX_SYNTHESIZED_NAME_LENGTH) return text
+  return `${text.slice(0, MAX_SYNTHESIZED_NAME_LENGTH)}…`
 }
